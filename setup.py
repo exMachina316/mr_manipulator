@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'hand_track_moveit'
+package_name = 'mr_manipulator'
 
 setup(
     name=package_name,
@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'action_client = mr_manipulator.action_client:main',
         ],
     },
 )
