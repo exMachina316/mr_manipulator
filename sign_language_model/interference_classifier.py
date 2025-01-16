@@ -4,6 +4,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
+
 model_dict = pickle.load(open('./model.p', 'rb'))
 model = model_dict['model']
 
@@ -13,16 +14,12 @@ mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 
-
 hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
-
-
-
 # hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
 
 labels_dict = {0: 'Pointer', 1: 'Hold', 2: 'Erase'}
-while True:
 
+while True:
     data_aux = []
     x_ = []
     y_ = []
@@ -72,8 +69,6 @@ while True:
                     cv2.LINE_AA)
         
     cv2.imshow('frame', frame)
-    
-
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
