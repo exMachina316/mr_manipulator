@@ -13,7 +13,6 @@ mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 
-
 hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 
 drawing_color = (0, 0, 255) 
@@ -25,8 +24,8 @@ erasing = False
 cap = cv2.VideoCapture(0)
 
 hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
-
 labels_dict = {0: 'Pointer', 1: 'Hold', 2: 'Erase'}
+
 while True:
 
     data_aux = []
@@ -39,9 +38,7 @@ while True:
     if canvas is None:
            canvas = np.zeros_like(frame)
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    
     results = hands.process(frame_rgb)
-
 
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
@@ -73,7 +70,6 @@ while True:
         y2 = int(max(y_) * H) - 10
 
         prediction = model.predict([np.asarray(data_aux)])
-
         predicted_character = labels_dict[int(prediction[0])]
         
         if predicted_character == 0 :
@@ -86,7 +82,6 @@ while True:
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), 4)
         cv2.putText(frame, predicted_character, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 0, 0), 3,
                     cv2.LINE_AA)
-        
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
