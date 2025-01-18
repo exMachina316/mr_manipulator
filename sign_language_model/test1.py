@@ -13,7 +13,6 @@ cap = cv2.VideoCapture(0)
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
-hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 
 drawing_color = (0, 0, 255) 
 canvas = None  
@@ -28,6 +27,7 @@ erase = 'Erase'
 # hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
 
 labels_dict = {0: 'Pointer', 1: 'Hold', 2: 'Erase'}
+
 while True:
 
     data_aux = []
@@ -78,7 +78,6 @@ while True:
         y2 = int(max(y_) * H) - 10
 
         prediction = model.predict([np.asarray(data_aux)])
-
         predicted_character = labels_dict[int(prediction[0])]
 
         #cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), 4)
