@@ -52,3 +52,5 @@ CATKIN_IGNORE
 
 # Python
 .venv
+
+sign_language_model/data/
