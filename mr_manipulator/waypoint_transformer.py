@@ -17,7 +17,7 @@ class WaypointDisplayNode(Node):
         # Subscribe to the PoseArray topic
         self.pose_array_subscription = self.create_subscription(
             PoseArray,
-            '/skeleton_pose_array',
+            '/waypoints',
             self.pose_array_callback,
             10
         )
