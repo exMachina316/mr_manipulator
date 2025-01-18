@@ -4,7 +4,7 @@ import mediapipe as mp
 import numpy as np
 
 
-model_dict = pickle.load(open('./model.p', 'rb'))
+model_dict = pickle.load(open('D:\\mr_manipulator\\models\\model.1.0.0.p', 'rb'))
 model = model_dict['model']
 
 cap = cv2.VideoCapture(0)
