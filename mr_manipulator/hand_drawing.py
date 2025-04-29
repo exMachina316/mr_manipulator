@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseArray, Pose
+from std_srvs.srv import Trigger
 import pickle
 import cv2
 import mediapipe as mp
@@ -11,15 +12,20 @@ class HandDrawingNode(Node):
         super().__init__('hand_drawing_node')
 
         # Declare and get the ROS 2 parameter for the model path
-        self.declare_parameter('model_path', "/root/ur_ws/src/mr_manipulator/models/model.p")
+        self.declare_parameter('model_path', "/root/ur_ws/src/mr_manipulator/models/model.2.0.2.p")
         model_path = self.get_parameter('model_path').get_parameter_value().string_value
 
         # Load the hand gesture model
         self.model_dict = pickle.load(open(model_path, 'rb'))
         self.model = self.model_dict['model']
 
+        sensor_qos = rclpy.qos.qos_profile_sensor_data
+
         # Create ROS 2 publisher for waypoints as PoseArray
-        self.waypoints_publisher = self.create_publisher(PoseArray, 'waypoints', 10)
+        self.waypoints_publisher = self.create_publisher(PoseArray, 'waypoints', sensor_qos)
+
+        # Create ROS 2 client for executing waypoints
+        self.execute_client = self.create_client(Trigger, 'execute_waypoints')
 
         # Initialize camera
         self.cap = cv2.VideoCapture(0)
@@ -28,8 +34,8 @@ class HandDrawingNode(Node):
         self.mp_hands = mp.solutions.hands
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_drawing_styles = mp.solutions.drawing_styles
-        self.hands = self.mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
-
+        self.hands = self.mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.9)
+        
         # Drawing and erasing configurations
         self.drawing_color = (0, 0, 255)
         self.waypoint_color = (0, 255, 0)
@@ -39,6 +45,16 @@ class HandDrawingNode(Node):
 
         # Timer for processing frames
         self.create_timer(0.01, self.process_frame)
+
+    def execute_callback(self, future):
+        try:
+            response = future.result()
+            if response.success:
+                self.get_logger().info(response.message)
+            else:
+                self.get_logger().error(response.message)
+        except Exception as e:
+            self.get_logger().error(f'Service call failed: {str(e)}')
 
     def process_frame(self):
         ret, frame = self.cap.read()
@@ -78,10 +94,14 @@ class HandDrawingNode(Node):
                 index_x = hand_landmarks.landmark[8].x * W
                 index_y = hand_landmarks.landmark[8].y * H
 
-                prediction = self.model.predict([np.asarray(data_aux)])
-                predicted_character = self.labels_dict[int(prediction[0])]
+                probabilities = self.model.predict_proba([np.asarray(data_aux)])[0]
+                predicted_class = np.argmax(probabilities)
+                confidence = probabilities[predicted_class]
 
-                cv2.putText(frame, predicted_character, (int(index_x), int(index_y) - 20),
+                predicted_character = self.labels_dict[predicted_class]
+
+                text = f"{predicted_character} ({confidence:.1%})"
+                cv2.putText(frame, text, (int(index_x), int(index_y) - 20),
                             cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
                 if predicted_character == 'Pointer':
@@ -92,27 +112,38 @@ class HandDrawingNode(Node):
                     self.waypoints.append((index_x, index_y))
 
                 elif predicted_character == 'Erase':
-                    self.waypoints.clear()
+                    if self.waypoints:
+                        self.get_logger().info("Erasing waypoints.")
+                        self.waypoints.clear()
                     self.canvas = np.zeros_like(frame)
 
-        frame_with_drawing = cv2.addWeighted(frame, 0.5, self.canvas, 0.5, 0)
-        cv2.imshow('Hand Drawing', frame_with_drawing)
+                elif predicted_character == 'Hold':
+                    if not self.waypoints:
+                        self.get_logger().warn("No waypoints to execute")
+                        return
+                    
+                    request = Trigger.Request()
+                    future = self.execute_client.call_async(request)
+                    future.add_done_callback(self.execute_callback)
 
-        # Publish waypoints to the ROS 2 topic as PoseArray
+        pose_array_msg = PoseArray()
+        pose_array_msg.header.stamp = self.get_clock().now().to_msg()
+        pose_array_msg.header.frame_id = 'camera_optical_frame'
+
         if self.waypoints:
-            pose_array_msg = PoseArray()
-            pose_array_msg.header.stamp = self.get_clock().now().to_msg()
-            pose_array_msg.header.frame_id = 'camera_frame'
-
             for waypoint in self.waypoints:
                 pose = Pose()
-                pose.position.x = waypoint[0]
-                pose.position.y = waypoint[1]
-                pose.position.z = 0.0
+                pose.position.x = (waypoint[0] - W/2) * 0.005
+                pose.position.y = (waypoint[1] - H/2) * 0.005
+                pose.position.z = 1.5
                 pose.orientation.w = 1.0
                 pose_array_msg.poses.append(pose)
 
-            self.waypoints_publisher.publish(pose_array_msg)
+        self.get_logger().debug(f"Published {len(pose_array_msg.poses)} waypoints.")
+        self.waypoints_publisher.publish(pose_array_msg)
+
+        frame_with_drawing = cv2.addWeighted(frame, 0.5, self.canvas, 0.5, 0)
+        cv2.imshow('Hand Drawing', frame_with_drawing)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             self.cleanup()

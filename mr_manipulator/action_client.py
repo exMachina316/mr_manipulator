@@ -1,68 +1,61 @@
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import PoseArray
+from std_srvs.srv import Trigger
 from ur_interfaces.action import ExecuteWayPoints  # Import your custom action type
-import numpy as np
 
 class ExecuteWayPointsClient(Node):
     def __init__(self):
         super().__init__('execute_waypoints_client')
 
+        self.waypoints = None
+        self.servicing = False
+        
+        # Create a subscription 
+        sensor_qos = rclpy.qos.qos_profile_sensor_data
+        self._waypoint_sub = self.create_subscription(
+            PoseArray,
+            'waypoints_transformed',
+            self.waypoint_callback,
+            sensor_qos
+        )
+
+        # Create service
+        self.srv = self.create_service(
+            Trigger,
+            'execute_waypoints',
+            self.execute_waypoints_callback
+        )
+
         # Initialize Action Client
         self._action_client = ActionClient(self, ExecuteWayPoints, 'plan_execute_cartesian_path')
 
-    def send_goal(self):
-        # Parse waypoints into a PoseArray
-        goal_msg = ExecuteWayPoints.Goal()
-    
-        for i in np.arange(10,21):
-            pose = Pose()
-            pose.position.x = 0.2
-            pose.position.y = 0.1
-            pose.position.z = round(0.1 + 0.02*i, 3)
-            pose.orientation.x = 0.0
-            pose.orientation.y = 0.0
-            pose.orientation.z = 0.0
-            pose.orientation.w = 1.0  # Identity quaternion
-            print(f'Pose {i}: {pose.position.x}, {pose.position.y}, {pose.position.z}')
-            goal_msg.waypoints.poses.append(pose)
-        
-        for i in np.arange(10,21):
-            pose = Pose()
-            pose.position.x = 0.2
-            pose.position.y = round(0.1 + 0.02*i, 3)
-            pose.position.z = 0.5
-            pose.orientation.x = 0.0
-            pose.orientation.y = 0.0
-            pose.orientation.z = 0.0
-            pose.orientation.w = 1.0  # Identity quaternion
-            print(f'Pose {i}: {pose.position.x}, {pose.position.y}, {pose.position.z}')
-            goal_msg.waypoints.poses.append(pose)
+    def execute_waypoints_callback(self, request, response):
+        """Service callback to execute stored waypoints"""
+        if self.waypoints is None or len(self.waypoints.poses) == 0:
+            response.success = False
+            response.message = "No waypoints available to execute"
+            return response
 
-        for i in np.arange(10,21):
-            pose = Pose()
-            pose.position.x = 0.2
-            pose.position.y = 0.5
-            pose.position.z = round(0.7 - 0.02*i, 3)
-            pose.orientation.x = 0.0
-            pose.orientation.y = 0.0
-            pose.orientation.z = 0.0
-            pose.orientation.w = 1.0  # Identity quaternion
-            print(f'Pose {i}: {pose.position.x}, {pose.position.y}, {pose.position.z}')
-            goal_msg.waypoints.poses.append(pose)
-        
-        for i in np.arange(10,21):
-            pose = Pose()
-            pose.position.x = 0.2
-            pose.position.y = round(0.7 - 0.02*i, 3)
-            pose.position.z = 0.3
-            pose.orientation.x = 0.0
-            pose.orientation.y = 0.0
-            pose.orientation.z = 0.0
-            pose.orientation.w = 1.0  # Identity quaternion
-            print(f'Pose {i}: {pose.position.x}, {pose.position.y}, {pose.position.z}')
-            goal_msg.waypoints.poses.append(pose)
+        elif self.servicing:
+            response.success = False
+            response.message = "Already executing waypoints"
+            return response
+
+        self.send_goal(self.waypoints)
+        response.success = True
+        self.servicing = True
+        response.message = f"Executing {len(self.waypoints.poses)} waypoints"
+        return response
+
+    def waypoint_callback(self, msg):
+        self.get_logger().debug(f"Received {len(msg.poses)} waypoints")
+        self.waypoints = msg
+
+    def send_goal(self, msg):
+        goal_msg = ExecuteWayPoints.Goal()
+        goal_msg.waypoints = msg
 
         self.get_logger().info(f"Sending goal with {len(goal_msg.waypoints.poses)} waypoints...")
 
@@ -94,16 +87,14 @@ class ExecuteWayPointsClient(Node):
             self.get_logger().info(f"Goal succeeded! Message: {result.message}")
         else:
             self.get_logger().error(f"Goal failed: {result.message}")
-        rclpy.shutdown()
+        
+        self.servicing = False
 
 
 def main(args=None):
     rclpy.init(args=args)
 
     client = ExecuteWayPointsClient()
-
-    # Send goal
-    client.send_goal()
 
     rclpy.spin(client)
 
