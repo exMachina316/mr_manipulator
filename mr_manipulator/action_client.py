@@ -3,7 +3,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from geometry_msgs.msg import PoseArray
 from std_srvs.srv import Trigger
-from ur_interfaces.action import ExecuteWayPoints  # Import your custom action type
+from ur_interfaces.action import ExecuteWayPoints
 
 class ExecuteWayPointsClient(Node):
     def __init__(self):

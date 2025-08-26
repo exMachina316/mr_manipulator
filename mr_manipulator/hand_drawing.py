@@ -6,10 +6,14 @@ import pickle
 import cv2
 import mediapipe as mp
 import numpy as np
+from sensor_msgs.msg import Image, CameraInfo
+from cv_bridge import CvBridge
 
 class HandDrawingNode(Node):
     def __init__(self):
         super().__init__('hand_drawing_node')
+
+        cv2.namedWindow('Hand Drawing', cv2.WINDOW_NORMAL)
 
         # Declare and get the ROS 2 parameter for the model path
         self.declare_parameter('model_path', "/root/ur_ws/src/mr_manipulator/models/model.2.0.2.p")
@@ -27,8 +31,22 @@ class HandDrawingNode(Node):
         # Create ROS 2 client for executing waypoints
         self.execute_client = self.create_client(Trigger, 'execute_waypoints')
 
-        # Initialize camera
-        self.cap = cv2.VideoCapture(0)
+        # Initialize CvBridge
+        self.bridge = CvBridge()
+
+        # Create a subscriber to the image topic
+        self.image_subscription = self.create_subscription(
+            Image,
+            '/oak/rgb/image_rect',
+            self.image_callback,
+            10)
+        
+        self.camera_info = None
+        self.camera_info_subscription = self.create_subscription(
+            CameraInfo,
+            '/oak/rgb/camera_info',
+            self.camera_info_callback,
+            10)
 
         # Initialize Mediapipe Hands
         self.mp_hands = mp.solutions.hands
@@ -40,11 +58,20 @@ class HandDrawingNode(Node):
         self.drawing_color = (0, 0, 255)
         self.waypoint_color = (0, 255, 0)
         self.canvas = None
+        
         self.waypoints = []
         self.labels_dict = {0: 'Pointer', 1: 'Hold', 2: 'Erase'}
 
-        # Timer for processing frames
-        self.create_timer(0.01, self.process_frame)
+        # Hold gesture tracking
+        self.hold_start_time = None
+        self.hold_triggered = False
+
+    def camera_info_callback(self, msg):
+        self.camera_info = msg
+        self.get_logger().info("Camera info received.")
+        # We can unsubscribe after receiving it once if it's static
+        self.destroy_subscription(self.camera_info_subscription)
+        self.camera_info_subscription = None
 
     def execute_callback(self, future):
         try:
@@ -56,10 +83,15 @@ class HandDrawingNode(Node):
         except Exception as e:
             self.get_logger().error(f'Service call failed: {str(e)}')
 
-    def process_frame(self):
-        ret, frame = self.cap.read()
-        if not ret:
-            self.get_logger().error("Failed to read from camera.")
+    def image_callback(self, msg):
+        if self.camera_info is None:
+            self.get_logger().warn("Waiting for camera info...")
+            return
+        
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        except Exception as e:
+            self.get_logger().error(f"Failed to convert image: {e}")
             return
 
         frame = cv2.flip(frame, 1)
@@ -105,6 +137,8 @@ class HandDrawingNode(Node):
                             cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
                 if predicted_character == 'Pointer':
+                    self.hold_start_time = None  # Reset hold timer
+                    self.hold_triggered = False
                     if len(self.waypoints) > 1:
                         cv2.line(self.canvas, (int(self.waypoints[-2][0]), int(self.waypoints[-2][1])),
                                  (int(index_x), int(index_y)), self.drawing_color, thickness=5)
@@ -112,32 +146,60 @@ class HandDrawingNode(Node):
                     self.waypoints.append((index_x, index_y))
 
                 elif predicted_character == 'Erase':
+                    self.hold_start_time = None  # Reset hold timer
+                    self.hold_triggered = False
                     if self.waypoints:
                         self.get_logger().info("Erasing waypoints.")
                         self.waypoints.clear()
                     self.canvas = np.zeros_like(frame)
 
                 elif predicted_character == 'Hold':
+
                     if not self.waypoints:
                         self.get_logger().warn("No waypoints to execute")
                         return
                     
-                    request = Trigger.Request()
-                    future = self.execute_client.call_async(request)
-                    future.add_done_callback(self.execute_callback)
+                    if self.hold_start_time is None:
+                        self.hold_start_time = self.get_clock().now()
+
+                    hold_duration = (self.get_clock().now() - self.hold_start_time).nanoseconds / 1e9
+                    
+                    if hold_duration >= 2.0 and not self.hold_triggered:
+                        self.get_logger().info("Hold detected for 2 seconds, executing waypoints.")
+                        request = Trigger.Request()
+                        future = self.execute_client.call_async(request)
+                        future.add_done_callback(self.execute_callback)
+                        self.hold_triggered = True # Prevent re-triggering
 
         pose_array_msg = PoseArray()
         pose_array_msg.header.stamp = self.get_clock().now().to_msg()
-        pose_array_msg.header.frame_id = 'camera_optical_frame'
+        pose_array_msg.header.frame_id = msg.header.frame_id
 
         if self.waypoints:
+            fx = self.camera_info.k[0]
+            fy = self.camera_info.k[4]
+            cx = self.camera_info.k[2]
+            cy = self.camera_info.k[5]
+
             for waypoint in self.waypoints:
+                u = waypoint[0]
+                v = waypoint[1]
+                
                 pose = Pose()
-                pose.position.x = (waypoint[0] - W/2) * 0.005
-                pose.position.y = (waypoint[1] - H/2) * 0.005
-                pose.position.z = 1.5
+                
+                # Convert pixel coordinates to camera frame coordinates
+                z = 1.015 # a fixed depth
+                x = (u - cx) * z / fx
+                y = (v - cy) * z / fy
+                
+                pose.position.x = x
+                pose.position.y = y
+                pose.position.z = z
                 pose.orientation.w = 1.0
                 pose_array_msg.poses.append(pose)
+
+        if self.hold_triggered:
+            cv2.putText(frame, "Executing...", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
 
         self.get_logger().debug(f"Published {len(pose_array_msg.poses)} waypoints.")
         self.waypoints_publisher.publish(pose_array_msg)
@@ -149,7 +211,6 @@ class HandDrawingNode(Node):
             self.cleanup()
 
     def cleanup(self):
-        self.cap.release()
         cv2.destroyAllWindows()
         self.get_logger().info("Shutting down Hand Drawing Node.")
         self.destroy_node()
