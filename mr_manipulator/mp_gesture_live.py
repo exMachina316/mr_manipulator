@@ -49,10 +49,14 @@ class LiveGestureRecognizer:
         self.fps = (timestamp_ms-self.latest_timestamp)
         self.latest_timestamp = timestamp_ms
 
-    def draw_landmarks_and_gestures(self, image, result):
+    def post_process(self, image, result):
         """Draw hand landmarks and gesture labels on the image"""
+        landmarks_lst = []
+        score = None
+        gesture_name = None
+
         if not result:
-            return image
+            return image, score, gesture_name, None, result
 
         # Draw hand landmarks
         if result.gestures:
@@ -76,32 +80,17 @@ class LiveGestureRecognizer:
                             self.mp_drawing_styles.get_default_hand_landmarks_style(),
                             self.mp_drawing_styles.get_default_hand_connections_style(),
                         )
+                        landmarks_lst.append(landmarks)
 
                     label = f"FPS: {self.fps}: {gesture_name} ({score:.2f})"
                     cv2.putText(image, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 
-        return image
+        return image, score, gesture_name, landmarks, result
 
-    def run_live_inference(self, camera_id=0, window_name="Gesture Recognition"):
+    def run_live_inference(self, frame):
         """Run live gesture recognition from camera feed"""
-        cap = cv2.VideoCapture(camera_id)
-
-        if not cap.isOpened():
-            print(f"Error: Could not open camera {camera_id}")
-            return
-
-        print("Starting live gesture recognition. Press 'q' to quit.")
-
         try:
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    print("Error: Could not read frame from camera")
-                    break
-
-                # Flip frame horizontally for mirror effect
-                frame = cv2.flip(frame, 1)
-
+            if frame is not None:
                 # Convert BGR to RGB for MediaPipe
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -115,24 +104,15 @@ class LiveGestureRecognizer:
                 self.recognizer.recognize_async(mp_image, timestamp_ms)
 
                 # Draw landmarks and gestures on the frame
-                annotated_frame = self.draw_landmarks_and_gestures(frame, self.latest_result)
+                return self.post_process(frame, self.get_latest_result())
 
-                # Display the frame
-                cv2.imshow(window_name, annotated_frame)
-
-                # Break loop on 'q' key press
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-
-                # Small delay to prevent overwhelming the processor
-                time.sleep(0.01)
+            else:
+                print("No frame captured from camera.")
 
         except KeyboardInterrupt:
             print("\nInterrupted by user")
 
         finally:
-            cap.release()
-            cv2.destroyAllWindows()
             self.recognizer.close()
 
     def get_latest_result(self):
